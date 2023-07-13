@@ -90,5 +90,5 @@ if __name__ == "__main__":
 
         model_path = f"models/lstm-{model_ts}-{epoch}.pth"
         th.save(model.state_dict(), model_path)
-        print(f"Epoch: {epoch}, test loss: {loss_sum / len(test_dl):.09f}, path: {model_path}")
+        print(f"Epoch: {epoch}, test loss: {loss_sum / len(test_dl):.09f}, model path: {model_path}\n")
 
