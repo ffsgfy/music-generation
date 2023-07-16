@@ -62,9 +62,9 @@ if __name__ == "__main__":
     loss_ema = 0.0
     optimizer = th.optim.Adamax(model.parameters(), lr=0.01)
 
-    train_ds = dataset.load_folder("input/train/", window=window, fmt=model.data_fmt)
+    train_ds = dataset.load_folder("input/schubert/train/", window=window, fmt=model.data_fmt)
     train_dl = th.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    test_ds = dataset.load_folder("input/test/", window=window, fmt=model.data_fmt)
+    test_ds = dataset.load_folder("input/schubert/test/", window=window, fmt=model.data_fmt)
     test_dl = th.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
     for epoch in range(10):
