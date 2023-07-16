@@ -4,7 +4,10 @@ import muspy
 import numpy as np
 import torch as th
 
-RESOLUTION = 8  # time steps per quarter note
+RESOLUTION = 4  # time steps per quarter note
+PITCH_MIN = 21
+PITCH_MAX = 108
+PITCH_COUNT = PITCH_MAX - PITCH_MIN + 1  # 88 (number of keys on a standard piano)
 
 
 class MuspyDataset(muspy.FolderDataset):
@@ -15,10 +18,10 @@ class MuspyDataset(muspy.FolderDataset):
 
 
 class TorchDataset(th.utils.data.Dataset):
-    def __init__(self, rolls: list[np.ndarray], window: int):
+    def __init__(self, streams: list[np.ndarray], window: int):
         self.window = window
-        self.rolls = [roll for roll in rolls if roll.shape[0] > window]
-        self.cumsums = [roll.shape[0] - window for roll in self.rolls]
+        self.streams = [stream for stream in streams if stream.shape[0] > window]
+        self.cumsums = [stream.shape[0] - window for stream in self.streams]
 
         for i in range(1, len(self.cumsums)):
             self.cumsums[i] += self.cumsums[i - 1]
@@ -27,30 +30,38 @@ class TorchDataset(th.utils.data.Dataset):
         return self.cumsums[-1] if len(self.cumsums) > 0 else 0
 
     def __getitem__(self, index: int):
-        rindex = bisect.bisect_right(self.cumsums, index)
-        index -= self.cumsums[rindex - 1] if rindex > 0 else 0
-        roll = self.rolls[rindex]
-        return (roll[index:index + self.window], roll[index + self.window])
+        sindex = bisect.bisect_right(self.cumsums, index)
+        index -= self.cumsums[sindex - 1] if sindex > 0 else 0
+        stream = self.streams[sindex]
+        return (stream[index:index + self.window], stream[index + self.window])
 
 
-def pianoroll_encode(music: muspy.Music) -> np.ndarray:
-    roll = muspy.to_pianoroll_representation(music, encode_velocity=False)
+class DataFormat:
+    def encode(self, music: muspy.Music) -> np.ndarray:
+        raise NotImplementedError()
 
-    # Make sure repeated notes aren't "fused" together by inserting a gap before each one
-    for track in music.tracks:
-        for note in track.notes:
-            if note.time > 0:
-                roll[note.time - 1, note.pitch] = False
-
-    return roll.T[21:109].T.astype(np.float32)
+    def decode(self, data: np.ndarray) -> muspy.Music:
+        raise NotImplementedError()
 
 
-def pianoroll_decode(roll: np.ndarray) -> muspy.Music:
-    return muspy.from_pianoroll_representation(
-        np.pad(roll > 0.0, ((0, 0), (21, 19))), RESOLUTION, encode_velocity=False
-    )
+class PianorollFormat(DataFormat):
+    def encode(self, music: muspy.Music) -> np.ndarray:
+        data = muspy.to_pianoroll_representation(music, encode_velocity=False, dtype=np.float32)
+
+        # Make sure repeated notes aren't "fused" together by inserting a gap before each one
+        for track in music.tracks:
+            for note in track.notes:
+                if note.time > 0:
+                    data[note.time - 1, note.pitch] = 0.0
+
+        return data[:, PITCH_MIN:PITCH_MAX + 1]
+
+    def decode(self, data: np.ndarray) -> muspy.Music:
+        return muspy.from_pianoroll_representation(
+            np.pad(data > 0.0, ((0, 0), (PITCH_MIN, 127 - PITCH_MAX))), RESOLUTION, encode_velocity=False
+        )
 
 
-def load_folder(root: str, window: int) -> TorchDataset:
-    return TorchDataset(map(pianoroll_encode, MuspyDataset(root, convert=True)), window)
+def load_folder(path: str, window: int, fmt: DataFormat) -> TorchDataset:
+    return TorchDataset(map(fmt.encode, MuspyDataset(path)), window)
 

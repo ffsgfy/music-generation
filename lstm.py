@@ -25,6 +25,8 @@ class Model(th.nn.Module):
             th.nn.Sigmoid()
         )
 
+        self.data_fmt = dataset.PianorollFormat()
+
     def forward(self, x: th.Tensor, hx: tuple[th.Tensor, th.Tensor] | None = None) -> th.Tensor:
         return self.decoder(self.lstm(x, hx)[1][0][-1])
 
@@ -60,9 +62,9 @@ if __name__ == "__main__":
     loss_ema = 0.0
     optimizer = th.optim.Adamax(model.parameters(), lr=0.01)
 
-    train_ds = dataset.load_folder("input/train/", window=window)
+    train_ds = dataset.load_folder("input/train/", window=window, fmt=model.data_fmt)
     train_dl = th.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-    test_ds = dataset.load_folder("input/test/", window=window)
+    test_ds = dataset.load_folder("input/test/", window=window, fmt=model.data_fmt)
     test_dl = th.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
     for epoch in range(10):
