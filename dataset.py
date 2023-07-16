@@ -8,6 +8,7 @@ RESOLUTION = 4  # time steps per quarter note
 PITCH_MIN = 21
 PITCH_MAX = 108
 PITCH_COUNT = PITCH_MAX - PITCH_MIN + 1  # 88 (number of keys on a standard piano)
+DURATION_COUNT = 8 * RESOLUTION  # number of note duration bins
 
 
 class MuspyDataset(muspy.FolderDataset):
@@ -59,6 +60,58 @@ class PianorollFormat(DataFormat):
     def decode(self, data: np.ndarray) -> muspy.Music:
         return muspy.from_pianoroll_representation(
             np.pad(data > 0.0, ((0, 0), (PITCH_MIN, 127 - PITCH_MAX))), RESOLUTION, encode_velocity=False
+        )
+
+
+class DurationPianorollFormat(DataFormat):
+    def __init__(self, fade: bool = False, normalize: bool = True):
+        self.fade = fade  # fade note durations over multiple timesteps
+        self.normalize = normalize  # normalize durations to [0.0, 1.0]
+
+    def encode(self, music: muspy.Music) -> np.ndarray:
+        notes: list[tuple[int, int, int]] = []  # [(time, pitch, duration), ...]
+        length = 0
+
+        for track in music.tracks:
+            for note in track.notes:
+                length = max(length, note.end)
+                time, duration = note.time, note.duration
+
+                # Split notes into pieces no longer than DURATION_COUNT
+                while duration > 0:
+                    duration_split = min(duration, DURATION_COUNT)
+                    duration -= duration_split
+                    notes.append((time, note.pitch, duration_split))
+                    time += duration_split
+
+        notes.sort()
+        data = np.zeros((length, 128), dtype=np.float32)
+
+        for time, pitch, duration in notes:
+            if self.fade:
+                data[time:time + duration, pitch] = np.arange(duration, 0, -1)
+            else:
+                data[time, pitch] = duration
+
+        # Normalize to [0.0, 1.0] with data points in the centers of DURATION_COUNT + 1 bins
+        if self.normalize:
+            data += 0.5
+            data /= DURATION_COUNT + 1
+
+        return data[:, PITCH_MIN:PITCH_MAX + 1]
+
+    def decode(self, data: np.ndarray) -> muspy.Music:
+        if self.normalize:
+            data = np.floor(data * (self.limit + 1))
+
+        notes: list[tuple[int, int, int]] = []  # [(time, pitch, duration), ...]
+        for time, pitch in np.argwhere(np.diff(data, axis=0, prepend=0.0) > 0.0):
+            notes.append((time, pitch + PITCH_MIN, int(data[time, pitch])))
+
+        return muspy.Music(
+            resolution=RESOLUTION, tracks=[muspy.Track(
+                notes=[muspy.Note(time, pitch, duration) for time, pitch, duration in sorted(notes)]
+            )]
         )
 
 
