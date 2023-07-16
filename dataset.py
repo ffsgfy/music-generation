@@ -1,3 +1,4 @@
+import enum
 import bisect
 
 import muspy
@@ -9,6 +10,7 @@ PITCH_MIN = 21
 PITCH_MAX = 108
 PITCH_COUNT = PITCH_MAX - PITCH_MIN + 1  # 88 (number of keys on a standard piano)
 DURATION_COUNT = 8 * RESOLUTION  # number of note duration bins
+OFFSET_COUNT = 8 * RESOLUTION  # number of bar/note offset bins
 
 
 class MuspyDataset(muspy.FolderDataset):
@@ -107,6 +109,90 @@ class DurationPianorollFormat(DataFormat):
         notes: list[tuple[int, int, int]] = []  # [(time, pitch, duration), ...]
         for time, pitch in np.argwhere(np.diff(data, axis=0, prepend=0.0) > 0.0):
             notes.append((time, pitch + PITCH_MIN, int(data[time, pitch])))
+
+        return muspy.Music(
+            resolution=RESOLUTION, tracks=[muspy.Track(
+                notes=[muspy.Note(time, pitch, duration) for time, pitch, duration in sorted(notes)]
+            )]
+        )
+
+
+class EventFormat(DataFormat):
+    class EventKind(enum.IntEnum):
+        BAR = 0
+        OFFSET = 1
+        PITCH = 2
+        DURATION = 3
+
+    EVENT_COUNT = 1 + OFFSET_COUNT + PITCH_COUNT + DURATION_COUNT
+    EVENT_OFFSETS = (0, 1, 1 + OFFSET_COUNT, 1 + OFFSET_COUNT + PITCH_COUNT)
+
+    def encode(self, music: muspy.Music) -> np.ndarray:
+        music = music.infer_barlines()
+        notes: list[tuple[int, int, int]] = []  # [(time, pitch, duration), ...]
+
+        for track in music.tracks:
+            for note in track.notes:
+                # Split notes into pieces no longer than DURATION_COUNT
+                time, duration = note.time, note.duration
+                pitch = note.pitch - PITCH_MIN
+                assert (pitch >= 0) and (pitch < PITCH_COUNT)
+
+                while duration > 0:
+                    duration_split = min(duration, DURATION_COUNT)
+                    duration -= duration_split
+                    notes.append((time, pitch, duration_split))
+                    time += duration_split
+
+        # Split bars into pieces no longer than OFFSET_COUNT - 1
+        time_base = 0
+        for time in sorted(barline.time for barline in music.barlines):
+            while time > time_base:
+                time_base += min(time - time_base, OFFSET_COUNT - 1)
+                notes.append((time_base, -1, 0))  # add fake notes with pitch = -1 to represent barlines
+
+        notes.sort()
+        events: list[int] = []
+        time_base = 0
+
+        for time, pitch, duration in notes:
+            offset = time - time_base
+            assert offset < OFFSET_COUNT
+
+            events.append(self.EVENT_OFFSETS[self.EventKind.OFFSET] + offset)
+            if pitch >= 0:
+                events.append(self.EVENT_OFFSETS[self.EventKind.PITCH] + pitch)
+                events.append(self.EVENT_OFFSETS[self.EventKind.DURATION] + duration)
+            else:
+                events.append(self.EVENT_OFFSETS[self.EventKind.BAR])
+                time_base = time
+
+        return np.array(events, dtype=np.int64)
+
+    def decode(self, data: np.ndarray) -> muspy.Music:
+        notes: list[tuple[int, int, int]] = []  # [(time, pitch, duration), ...]
+        time_base = 0
+        pitch = -1
+        offset = -1
+
+        for event in data:
+            if event >= self.EVENT_OFFSETS[self.EventKind.DURATION]:
+                if (pitch >= 0) and (offset >= 0):
+                    duration = event - self.EVENT_OFFSETS[self.EventKind.DURATION]
+                    notes.append((time_base + offset, pitch + PITCH_MIN, duration))
+                pitch = -1
+                offset = -1
+            elif event >= self.EVENT_OFFSETS[self.EventKind.PITCH]:
+                if offset >= 0:
+                    pitch = event - self.EVENT_OFFSETS[self.EventKind.PITCH]
+            elif event >= self.EVENT_OFFSETS[self.EventKind.OFFSET]:
+                pitch = -1
+                offset = event - self.EVENT_OFFSETS[self.EventKind.OFFSET]
+            else:
+                if offset >= 0:
+                    time_base += offset
+                pitch = -1
+                offset = -1
 
         return muspy.Music(
             resolution=RESOLUTION, tracks=[muspy.Track(
