@@ -133,11 +133,11 @@ class EventFormat(DataFormat):
 
         for track in music.tracks:
             for note in track.notes:
-                # Split notes into pieces no longer than DURATION_COUNT
                 time, duration = note.time, note.duration
                 pitch = note.pitch - PITCH_MIN
                 assert (pitch >= 0) and (pitch < PITCH_COUNT)
 
+                # Split notes into pieces no longer than DURATION_COUNT
                 while duration > 0:
                     duration_split = min(duration, DURATION_COUNT)
                     duration -= duration_split
@@ -162,7 +162,7 @@ class EventFormat(DataFormat):
             events.append(self.EVENT_OFFSETS[self.EventKind.OFFSET] + offset)
             if pitch >= 0:
                 events.append(self.EVENT_OFFSETS[self.EventKind.PITCH] + pitch)
-                events.append(self.EVENT_OFFSETS[self.EventKind.DURATION] + duration)
+                events.append(self.EVENT_OFFSETS[self.EventKind.DURATION] + duration - 1)
             else:
                 events.append(self.EVENT_OFFSETS[self.EventKind.BAR])
                 time_base = time
@@ -179,7 +179,7 @@ class EventFormat(DataFormat):
             if event >= self.EVENT_OFFSETS[self.EventKind.DURATION]:
                 if (pitch >= 0) and (offset >= 0):
                     duration = event - self.EVENT_OFFSETS[self.EventKind.DURATION]
-                    notes.append((time_base + offset, pitch + PITCH_MIN, duration))
+                    notes.append((time_base + offset, pitch + PITCH_MIN, duration + 1))
                 pitch = -1
                 offset = -1
             elif event >= self.EVENT_OFFSETS[self.EventKind.PITCH]:
