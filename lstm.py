@@ -1,4 +1,5 @@
 import time
+import math
 
 import numpy as np
 import torch as th
@@ -23,7 +24,6 @@ class Model(th.nn.Module):
             th.nn.ReLU(),
             th.nn.Dropout(0.5),
             th.nn.Linear(in_features=256, out_features=dataset.EventFormat.EVENT_COUNT),
-            th.nn.LogSoftmax(-1)
         )
 
         self.data_fmt = dataset.EventFormat()
@@ -32,25 +32,36 @@ class Model(th.nn.Module):
         self, x: th.Tensor, hx: tuple[th.Tensor, th.Tensor] | None = None, sequence: bool = False
     ) -> th.Tensor:
         x = self.lstm(self.encoder(x), hx)[0]
-        return self.decoder(x if sequence else x[-1])
+        x = self.decoder(x if sequence else x[-1])
+        return th.nn.functional.log_softmax(x, dim=-1)
 
-    def predict(self, roll: np.ndarray, length: int, threshold: float = 0.3) -> np.ndarray:
+    def predict(
+        self, data: np.ndarray, length: int, temperature: float = 1.0, masked: bool = False
+    ) -> np.ndarray:
         device = next(self.parameters()).device
-        x = th.Tensor(roll).to(device)
+        x = th.LongTensor(data).to(device)
         hx = None
+        mask = th.ones(self.data_fmt.EVENT_COUNT, dtype=bool).to(device)  # next token mask
         result = []
 
         with th.no_grad():
             for i in range(length):
-                _, hx = self.lstm(x, hx)
-                output = self.decoder(hx[0][-1])
-                mask = output > threshold
-                output[mask] = 1.0
-                output[~mask] = 0.0
-                x = output.unsqueeze(0)
-                result.append(np.array(output))
+                if masked:
+                    mask = th.BoolTensor(self.data_fmt.next_mask(x[-1])).to(device)
 
-        return np.stack(result)
+                x, hx = self.lstm(self.encoder(x), hx)
+                x = self.decoder(x[-1])
+                x[~mask] = -th.inf
+
+                if math.isclose(temperature, 0.0, abs_tol=1e-9):
+                    x = th.argmax(x, dim=-1, keepdim=True)
+                else:
+                    x = th.nn.functional.softmax(x / temperature, dim=-1)
+                    x = th.multinomial(x, 1)
+
+                result.append(int(x))
+
+        return np.array(result)
 
 
 if __name__ == "__main__":
