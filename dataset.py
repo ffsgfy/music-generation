@@ -125,7 +125,7 @@ class EventFormat(DataFormat):
         DURATION = 3
 
     EVENT_COUNT = 1 + OFFSET_COUNT + PITCH_COUNT + DURATION_COUNT
-    EVENT_OFFSETS = (0, 1, 1 + OFFSET_COUNT, 1 + OFFSET_COUNT + PITCH_COUNT)
+    EVENT_OFFSETS = (0, 1, 1 + OFFSET_COUNT, 1 + OFFSET_COUNT + PITCH_COUNT, EVENT_COUNT)
 
     def encode(self, music: muspy.Music) -> np.ndarray:
         music = music.infer_barlines()
@@ -199,6 +199,30 @@ class EventFormat(DataFormat):
                 notes=[muspy.Note(time, pitch, duration) for time, pitch, duration in sorted(notes)]
             )]
         )
+
+    @classmethod
+    def next_mask(cls, event: int) -> np.ndarray:
+        result = np.zeros(cls.EVENT_COUNT, dtype=bool)
+
+        def mask_kind(kind: cls.EventKind):
+            nonlocal cls, result
+            result[cls.EVENT_OFFSETS[kind]:cls.EVENT_OFFSETS[kind + 1]] = True
+
+        if event >= cls.EVENT_OFFSETS[cls.EventKind.DURATION]:
+            # DURATION is followed by OFFSET
+            mask_kind(cls.EventKind.OFFSET)
+        elif event >= cls.EVENT_OFFSETS[cls.EventKind.PITCH]:
+            # PITCH is followed by DURATION
+            mask_kind(cls.EventKind.DURATION)
+        elif event >= cls.EVENT_OFFSETS[cls.EventKind.OFFSET]:
+            # OFFSET is followed by BAR or PITCH
+            mask_kind(cls.EventKind.BAR)
+            mask_kind(cls.EventKind.PITCH)
+        else:
+            # BAR is followed by OFFSET
+            mask_kind(cls.EventKind.OFFSET)
+
+        return result
 
 
 def load_folder(path: str, window: int, fmt: DataFormat) -> TorchDataset:
