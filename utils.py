@@ -137,6 +137,16 @@ def train(
                 tqdm_it.set_description(f"Testing ({loss_sum / (i + 1):.05f})")
 
 
+def cleanup(model: ModelBase, data: th.Tensor, threshold: float) -> th.Tensor:
+    probs = th.nn.functional.softmax(model(data), dim=-1)
+    maxima = probs.max(dim=-1)
+    diffs = maxima.values - probs[th.arange(probs.size(0)), data]
+    nmask = diffs < threshold
+    result = maxima.indices
+    result[nmask] = data[nmask]
+    return result
+
+
 @th.inference_mode()
 def predict(
     model: ModelBase,  # should return single token
@@ -147,6 +157,7 @@ def predict(
     cleanup_model: ModelBase | None = None,  # should return token sequence
     cleanup_window: int = 1,  # cleanup input window length
     cleanup_runup: int = 1,  # number of steps to generate before running cleanup
+    cleanup_threshold: float = 0.1,  # minimum probability difference required to replace a token
     cleanup_all: bool = False  # whether cleanup can modify its entire input window (vs only the runup)
 ) -> np.ndarray:
     if seed is None:
@@ -158,7 +169,7 @@ def predict(
     runup = 0
 
     # WARN: very slow code with exactly zero caching and optimization
-    for i in range(count):
+    for i in (tqdm_it := tqdm(range(count), leave=False)):
         if len(data) > 0:
             mask = th.BoolTensor(model.data_fmt.next_mask(data[-1])).to(device)
 
@@ -175,8 +186,10 @@ def predict(
         if cleanup_model is not None:
             runup += 1
             if (len(data) >= cleanup_window) and ((runup >= cleanup_runup) or (i + 1 >= count)):
-                suffix = cleanup_window if cleanup_all else runup
-                data[-suffix:] = th.argmax(cleanup_model(data[-cleanup_window:])[-suffix:], dim=-1)
+                modsize = min(len(data) - len(seed), cleanup_window if cleanup_all else runup)
+                cdata = cleanup(cleanup_model, data[-cleanup_window:], cleanup_threshold)[-modsize:]
+                tqdm_it.write(f"Cleanup: {int(th.sum(data[-modsize:] != cdata))}/{modsize}")
+                data[-modsize:] = cdata
                 runup = 0
 
     return np.array(data.cpu())
