@@ -194,3 +194,41 @@ def predict(
 
     return np.array(data.cpu())
 
+
+# Generation example
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    from lstm import Model as LstmModel
+    from transformer import Model as TransformerModel
+    # from fnet import Model as FNetModel
+
+    seed = th.seed()
+    # seed = 42
+    th.manual_seed(seed)
+    print(f"Random seed: {seed}")
+
+    lstm = LstmModel().eval().cuda()
+    lstm.load_state_dict(th.load("models/lstm-64-512-2.8.pth")["model"])
+
+    transformer = TransformerModel().eval().cuda()
+    transformer.load_state_dict(th.load("models/transformer-256-16-8-r2.5.pth")["model"])
+
+    # fnet = FNetModel().eval().cuda()
+    # fnet.load_state_dict(th.load("models/fnet-384-8.25.pth")["model"])
+
+    # model, temperature = lstm, 0.5
+    model, temperature = transformer, 1.0
+    window = 1024  # context size
+    count = 1024  # number of tokens to generate
+
+    ev = dataset.EventFormat()
+    pr = dataset.PianorollFormat()
+    ds = dataset.load_folder("input/ff/test", 256, ev)
+    out = predict(model, window, count, temperature, None)  # unconditional
+    # out = predict(model, window, count, temperature, ds[0])  # conditional
+    m = ev.decode(out)
+    plt.imshow(pr.encode(m).T)
+    plt.gca().invert_yaxis()
+    plt.show()
+    # m.write("out.mid")
+
