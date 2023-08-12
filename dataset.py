@@ -23,20 +23,20 @@ class MuspyDataset(muspy.FolderDataset):
 class TorchDataset(th.utils.data.Dataset):
     def __init__(self, streams: list[np.ndarray], window: int):
         self.window = window
-        self.streams = [stream for stream in streams if stream.shape[0] > window]
-        self.cumsums = [stream.shape[0] - window for stream in self.streams]
+        self.streams = [stream for stream in streams if stream.shape[0] >= window]
+        self.cumsums = [stream.shape[0] - window + 1 for stream in self.streams]
 
         for i in range(1, len(self.cumsums)):
             self.cumsums[i] += self.cumsums[i - 1]
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.cumsums[-1] if len(self.cumsums) > 0 else 0
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> np.ndarray:
         sindex = bisect.bisect_right(self.cumsums, index)
         index -= self.cumsums[sindex - 1] if sindex > 0 else 0
         stream = self.streams[sindex]
-        return (stream[index:index + self.window], stream[index + self.window])
+        return stream[index:index + self.window]
 
 
 class DataFormat:
